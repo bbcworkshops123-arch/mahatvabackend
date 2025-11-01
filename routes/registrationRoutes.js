@@ -3,7 +3,18 @@ import Registration from "../models/Registration.js";
 
 const router = express.Router();
 
-// ✅ POST - Create New Registration
+/**
+ * 🧮 Helper: Generate sequential registration ID
+ */
+async function generateRegistrationId() {
+  const last = await Registration.findOne().sort({ createdAt: -1 });
+  const next = last ? parseInt(last.registrationId) + 1 : 1;
+  return next.toString().padStart(2, "0");
+}
+
+/**
+ * ✅ POST - Create new registration with all events
+ */
 router.post("/", async (req, res) => {
   try {
     const {
@@ -11,14 +22,24 @@ router.post("/", async (req, res) => {
       collegeAddress,
       facultyIncharge,
       contactNumber,
-      eventName,
-      membersCount,
-      memberNames,
+      events,
     } = req.body;
 
-    // Generate registration ID (e.g., 01, 02, 03…)
-    const count = await Registration.countDocuments();
-    const registrationId = (count + 1).toString().padStart(2, "0");
+    if (
+      !collegeName ||
+      !collegeAddress ||
+      !facultyIncharge ||
+      !contactNumber ||
+      !Array.isArray(events) ||
+      events.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "All college and event details are required.",
+      });
+    }
+
+    const registrationId = await generateRegistrationId();
 
     const newRegistration = new Registration({
       registrationId,
@@ -26,15 +47,14 @@ router.post("/", async (req, res) => {
       collegeAddress,
       facultyIncharge,
       contactNumber,
-      eventName,
-      membersCount,
-      memberNames: Array.isArray(memberNames) ? memberNames : [memberNames],
+      events,
     });
 
     await newRegistration.save();
+
     res.status(201).json({
       success: true,
-      message: "Registration successful",
+      message: "Registration successful for all events!",
       registrationId,
     });
   } catch (error) {
@@ -43,7 +63,9 @@ router.post("/", async (req, res) => {
   }
 });
 
-// ✅ GET - Fetch All Registrations
+/**
+ * 📋 GET - All Registrations
+ */
 router.get("/", async (req, res) => {
   try {
     const registrations = await Registration.find().sort({ createdAt: -1 });
@@ -54,10 +76,22 @@ router.get("/", async (req, res) => {
   }
 });
 
-// ✅ PUT - Update Marks for a Team
-router.put("/marks/:id", async (req, res) => {
+/**
+ * 🧾 PUT - Update marks for a specific event in a college
+ * Body Example:
+ * {
+ *   "round1": 10,
+ *   "round2": 20,
+ *   "round3": 15,
+ *   "round4": 25,
+ *   "round5": 30
+ * }
+ */
+router.put("/:registrationId/event/:eventName/marks", async (req, res) => {
   try {
+    const { registrationId, eventName } = req.params;
     const { round1, round2, round3, round4, round5 } = req.body;
+
     const total =
       Number(round1 || 0) +
       Number(round2 || 0) +
@@ -65,32 +99,48 @@ router.put("/marks/:id", async (req, res) => {
       Number(round4 || 0) +
       Number(round5 || 0);
 
-    const updated = await Registration.findByIdAndUpdate(
-      req.params.id,
-      {
-        $set: {
-          "marks.round1": round1,
-          "marks.round2": round2,
-          "marks.round3": round3,
-          "marks.round4": round4,
-          "marks.round5": round5,
-          "marks.total": total,
-        },
-      },
-      { new: true }
-    );
+    const registration = await Registration.findOne({ registrationId });
+    if (!registration)
+      return res.status(404).json({ message: "Registration not found" });
 
-    res.json({ success: true, updated });
+    const event = registration.events.find((e) => e.eventName === eventName);
+    if (!event)
+      return res.status(404).json({ message: "Event not found for this college" });
+
+    event.marks = { round1, round2, round3, round4, round5, total };
+
+    await registration.save();
+
+    res.json({
+      success: true,
+      message: "Marks updated successfully!",
+      event,
+    });
   } catch (error) {
     console.error("Error updating marks:", error);
     res.status(500).json({ success: false, message: "Failed to update marks" });
   }
 });
 
-// ✅ GET - Leaderboard Sorted by Total Marks
+/**
+ * 🏆 GET - Leaderboard (by total marks for any event)
+ */
 router.get("/leaderboard", async (req, res) => {
   try {
-    const leaderboard = await Registration.find().sort({ "marks.total": -1 });
+    const all = await Registration.find();
+
+    // Flatten all events with marks
+    const leaderboard = all.flatMap((reg) =>
+      reg.events.map((e) => ({
+        collegeName: reg.collegeName,
+        eventName: e.eventName,
+        total: e.marks.total || 0,
+      }))
+    );
+
+    // Sort descending by total marks
+    leaderboard.sort((a, b) => b.total - a.total);
+
     res.json(leaderboard);
   } catch (error) {
     console.error("Error fetching leaderboard:", error);
