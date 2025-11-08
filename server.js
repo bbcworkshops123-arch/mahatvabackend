@@ -18,7 +18,6 @@ mongoose
   })
   .then(() => console.log("✅ MongoDB connected"))
   .catch((err) => console.log("❌ DB connection error:", err));
-
 // Routes
 app.use("/api/registrations", registrationRoutes);
 
